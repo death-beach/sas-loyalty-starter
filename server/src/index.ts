@@ -5,6 +5,13 @@ import { createSmsProvider } from './services/sms.js';
 import { createSasClient } from './services/sas.js';
 import { customers } from './services/customers.js';
 import { RedemptionCodes } from './services/redemption.js';
+import { deriveCredentialPda, deriveSchemaPda, getCreateCredentialInstruction, getCreateSchemaInstruction } from 'sas-lib'
+import { createSolanaClient, createTransaction } from 'gill'
+import nacl from 'tweetnacl'
+import bs58 from 'bs58'
+import { Keypair, clusterApiUrl } from '@solana/web3.js'
+import { address, type Address } from '@solana/addresses'
+import { SignatureBytes } from '@solana/keys'
 
 const app = express();
 app.use(cors());
@@ -222,6 +229,68 @@ app.post('/payments/process', async (req, res) => {
     res.status(400).json({ error: e?.message || 'payment processing failed' });
   }
 });
+
+app.post('/sas/setup', async (req, res) => {
+  try {
+    const { credentialName, schemaName, description } = req.body as { credentialName?: string; schemaName?: string; description?: string }
+    const bs58mod = bs58
+    const url = process.env.SOLANA_DEVNET_RPC_URL || clusterApiUrl('devnet')
+    const client = createSolanaClient({ urlOrMoniker: url })
+
+    const payerSecret = process.env.PAYER_SECRET_KEY
+    if (!payerSecret) return res.status(400).json({ error: 'PAYER_SECRET_KEY missing' })
+    const kp = Keypair.fromSecretKey(bs58mod.decode(payerSecret))
+    const signer = {
+      address: kp.publicKey.toBase58() as Address,
+      signTransactions: async (txs: any[]) => {
+        const sigs: Readonly<Record<Address, SignatureBytes>>[] = []
+        for (const tx of txs) {
+          const sig = nacl.sign.detached(tx.messageBytes as unknown as Uint8Array, kp.secretKey)
+          sigs.push({ [kp.publicKey.toBase58() as Address]: sig as SignatureBytes })
+        }
+        return sigs
+      }
+    }
+
+    const credName = credentialName || `SAS-Cred-${Date.now()}`
+    const schName = schemaName || 'Points'
+    const layout = Buffer.from([4]) // u32
+    const fields = ['points']
+    const desc = description || 'Points balance attestation (u32)'
+
+    const [credPda] = await deriveCredentialPda({ authority: signer.address, name: credName })
+    const [schemaPda] = await deriveSchemaPda({ credential: credPda, name: schName, version: 1 })
+
+    const i1 = getCreateCredentialInstruction({
+      payer: signer, credential: credPda, authority: signer, name: credName, signers: [signer.address]
+    })
+    const i2 = getCreateSchemaInstruction({
+      authority: signer, payer: signer, name: schName, credential: credPda, description: desc, fieldNames: fields, schema: schemaPda, layout
+    })
+
+    const latest = await client.rpc.getLatestBlockhash().send()
+    const tx = createTransaction({
+      version: 'legacy',
+      feePayer: signer.address,
+      instructions: [i1, i2],
+      latestBlockhash: latest.value,
+      computeUnitLimit: 1_400_000,
+      computeUnitPrice: 1,
+    })
+    const sig = await client.sendAndConfirmTransaction(tx, { skipPreflight: true, commitment: 'confirmed' })
+
+    // Surface PDAs so you can copy them into env for future runs
+    res.json({
+      ok: true,
+      credentialPda: credPda.toString(),
+      schemaPda: schemaPda.toString(),
+      signature: sig
+    })
+  } catch (e: any) {
+    console.error(e)
+    res.status(500).json({ error: e?.message || 'setup failed' })
+  }
+})
 
 app.listen(PORT, () => {
   console.log(`[server] listening on http://localhost:${PORT}`);

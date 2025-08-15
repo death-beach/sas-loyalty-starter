@@ -9,9 +9,18 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@solana/addresses": "^2.3.0",
+    "@solana/instructions": "^2.3.0",
+    "@solana/keys": "^2.3.0",
+    "@solana/web3.js": "^1.98.4",
+    "bs58": "^6.0.0",
+    "buffer": "^6.0.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "gill": "^0.10.3",
+    "sas-lib": "^1.0.9",
+    "tweetnacl": "^1.0.3",
     "twilio": "^5.2.2"
   },
   "devDependencies": {
