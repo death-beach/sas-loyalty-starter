@@ -14,6 +14,41 @@ const PORT = process.env.PORT ? Number(process.env.PORT) : 4000;
 const sms = createSmsProvider(process.env.SMS_PROVIDER || 'stub');
 const sas = createSasClient(process.env.USE_MOCK_SAS !== 'false');
 const redemptions = new RedemptionCodes();
+const DEMO_RETURNING_PHONE = process.env.DEMO_RETURNING_PHONE || '+15551234567';
+
+type PointsConfig = {
+  pointsName: string;
+  programName: string;
+  rewardType: 'percent_off' | 'dollars_off';
+  rewardValue: number;      // e.g. 10 (% or $)
+  dollarsSpent: number;     // e.g. 100
+  rewardMode: 'Disabled' | 'Points Only' | 'Tiers Only' | 'Both';
+};
+let pointsConfig: PointsConfig = {
+  pointsName: 'Points',
+  programName: 'Loyalty',
+  rewardType: 'dollars_off',
+  rewardValue: Number(process.env.COUPON_VALUE || 10),
+  dollarsSpent: Number(process.env.COUPON_THRESHOLD || 100),
+  rewardMode: 'Points Only',
+};
+
+app.get('/config/points', (_req, res) => res.json(pointsConfig));
+
+app.post('/config/points', (req, res) => {
+  const { pointsName, programName, rewardType, rewardValue, dollarsSpent, rewardMode } = req.body || {};
+  if (!pointsName || !programName || !rewardType || rewardValue == null || dollarsSpent == null || !rewardMode) {
+    return res.status(400).json({ error: 'missing fields' });
+  }
+  pointsConfig = { pointsName, programName, rewardType, rewardValue: Number(rewardValue), dollarsSpent: Number(dollarsSpent), rewardMode };
+  // Map to demo coupon behavior
+  if (pointsConfig.rewardType === 'dollars_off') {
+    (process.env as any).COUPON_VALUE = String(pointsConfig.rewardValue);
+    (process.env as any).COUPON_THRESHOLD = String(pointsConfig.dollarsSpent); // 1 pt = $1
+  }
+  res.json({ ok: true, pointsConfig });
+});
+
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
@@ -113,19 +148,22 @@ app.post('/payments/process', async (req, res) => {
 
     if (flow === 'returning') {
       if (!phone) return res.status(400).json({ error: 'phone required for returning customer' });
-      const att = await sas.issuePointsAttestation(phone, pts, { reason: 'purchase-returning' });
-      const coupon = await maybeCreateCoupon(phone);
-      await sms.send(phone, `You earned ${pts} point(s). Balance: ${(await sas.getAttestations(phone)).balance}.`);
-      return res.json({ ok: true, pointsAdded: pts, coupon, att });
+      const usePhone = phone || DEMO_RETURNING_PHONE;
+      const att = await sas.issuePointsAttestation(usePhone, pts, { reason: 'purchase-returning' });
+      const coupon = await maybeCreateCoupon(usePhone);
+      await sms.send(usePhone, `You earned ${pts} point(s). Balance: ${(await sas.getAttestations(usePhone)).balance}.`);
+      return res.json({ ok: true, pointsAdded: pts, coupon, att, phone: usePhone });
     }
+    
 
     if (flow === 'returningWithDistribute') {
       if (!phone) return res.status(400).json({ error: 'phone required for returningWithDistribute' });
-      await sas.issuePointsAttestation(phone, 95, { reason: 'seed-demo' });
-      const att = await sas.issuePointsAttestation(phone, pts, { reason: 'purchase-returning' });
-      const coupon = await maybeCreateCoupon(phone);
-      await sms.send(phone, `You earned ${pts} point(s). Balance: ${(await sas.getAttestations(phone)).balance}.`);
-      return res.json({ ok: true, pointsAdded: pts, seeded: 95, coupon, att });
+      const usePhone = phone || DEMO_RETURNING_PHONE;
+      await sas.issuePointsAttestation(usePhone, 95, { reason: 'seed-demo' });
+      const att = await sas.issuePointsAttestation(usePhone, pts, { reason: 'purchase-returning' });
+      const coupon = await maybeCreateCoupon(usePhone);
+      await sms.send(usePhone, `You earned ${pts} point(s). Balance: ${(await sas.getAttestations(usePhone)).balance}.`);
+      return res.json({ ok: true, pointsAdded: pts, seeded: 95, coupon, att, phone: usePhone });
     }
 
     return res.status(400).json({ error: 'invalid flow' });

@@ -13,45 +13,53 @@ async function apiProcess(body: any) {
 
 export default function Payments() {
   const [amount, setAmount] = useState<number>(10)
-  const [phone, setPhone] = useState('')
+  const [showNewPhone, setShowNewPhone] = useState(false)
+  const [newPhone, setNewPhone] = useState('')
   const [result, setResult] = useState<any>(null)
 
-  const handleNew = async () => {
-    if (!phone) return alert('Enter phone for new customer');
-    const res = await apiProcess({ amount, flow: 'new', phone })
+  const handleNewClick = () => setShowNewPhone(true)
+
+  const confirmNew = async () => {
+    if (!newPhone) return alert('Enter phone for new customer');
+    const res = await apiProcess({ amount, flow: 'new', phone: newPhone })
     setResult(res)
+    setShowNewPhone(false)
+    setNewPhone('')
   }
 
   const handleReturning = async () => {
-    if (!phone) return alert('Enter phone for returning customer')
-    const res = await apiProcess({ amount, flow: 'returning', phone })
+    const res = await apiProcess({ amount, flow: 'returning' }) // phone resolved on server
     setResult(res)
   }
 
   const handlePayAndDistribute = async () => {
-    if (!phone) return alert('Enter phone')
-    const res = await apiProcess({ amount, flow: 'returningWithDistribute', phone })
+    const res = await apiProcess({ amount, flow: 'returningWithDistribute' }) // phone resolved on server
     setResult(res)
   }
 
   return (
     <div style={{ display: 'grid', gap: 16, maxWidth: 560 }}>
       <h2>Payments + Issuance</h2>
-      <div style={{ display: 'grid', gap: 8 }}>
-        <label>Order total ($)
-          <input type="number" value={amount} onChange={e=>setAmount(parseFloat(e.target.value||'0'))} />
-        </label>
+      <label>Order total ($)
+        <input type="number" value={amount} onChange={e=>setAmount(parseFloat(e.target.value||'0'))} />
+      </label>
 
-        <label>Phone
-          <input value={phone} onChange={e=>setPhone(e.target.value)} placeholder="+15551234567" />
-        </label>
-
-        <div style={{ display: 'flex', gap: 8, flexWrap:'wrap' }}>
-          <button onClick={handleNew}>Payment: New Customer</button>
-          <button onClick={handleReturning}>Payment: Returning Customer</button>
-          <button onClick={handlePayAndDistribute}>Pay & Distribute (seed 95 + this order)</button>
-        </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap:'wrap' }}>
+        <button onClick={handleNewClick}>Payment: New Customer</button>
+        <button onClick={handleReturning}>Payment: Returning Customer</button>
+        <button onClick={handlePayAndDistribute}>Pay & Distribute (seed 95 + this order)</button>
       </div>
+
+      {showNewPhone && (
+        <div style={{ border:'1px solid #ffe58f', background:'#fffbe6', padding: 12, borderRadius: 8 }}>
+          <div>Enter phone to create wallet & issue points to a new customer.</div>
+          <div style={{ display:'flex', gap:8, marginTop:8 }}>
+            <input value={newPhone} onChange={e=>setNewPhone(e.target.value)} placeholder="+15551234567" />
+            <button onClick={confirmNew}>Confirm</button>
+            <button onClick={()=>{ setShowNewPhone(false); setNewPhone(''); }}>Cancel</button>
+          </div>
+        </div>
+      )}
 
       {result && (
         <div style={{ border:'1px solid #eee', padding: 12, borderRadius: 8 }}>
