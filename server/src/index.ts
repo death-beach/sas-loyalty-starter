@@ -63,14 +63,14 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 // Issue points + SMS (simple punchcard-style issuance demo)
 app.post('/rewards/issue', async (req, res) => {
   try {
-    const { phone, points, message } = req.body as { phone: string; points: number; message?: string };
+    const { phone, points, message } = req.body as { phone?: string; points: number; message?: string };
     if (points === undefined) return res.status(400).json({ error: 'points required' });
 
     const smsOut: { to: string; body: string }[] = [];
     const toPhone = normalizeUSPhone(phone || DEMO_RETURNING_PHONE);
 
     const attestation = await sas.issuePointsAttestation(toPhone, points, { reason: 'purchase' });
-    const text = message ?? `You earned ${points} point(s). Balance: ${attestation.balance}.`;
+    const text = message ?? `You earned ${points} ${pointsConfig.pointsName} point(s). Balance: ${attestation.balance}.`;
     await sms.send(toPhone, text);
     smsOut.push({ to: toPhone, body: text });
 
@@ -106,15 +106,20 @@ app.post('/rewards/:phone/redemption', async (req, res) => {
 // Verify & apply redemption
 app.post('/rewards/redeem', async (req, res) => {
   try {
-    const { code, phone } = req.body as { code: string; phone: string };
-    const ok = redemptions.verifyAndConsume(code, phone);
-    if (!ok) return res.status(400).json({ error: 'invalid or consumed code' });
-    await sas.issuePointsAttestation(phone, -1, { reason: 'redeem-demo' });
-    res.json({ ok: true });
+    const { code, phone } = req.body as { code: string; phone?: string };
+    if (!code) return res.status(400).json({ error: 'code required' });
+
+    const usePhone = normalizeUSPhone(phone || DEMO_RETURNING_PHONE);
+    const value = redemptions.verifyAndConsume(code, usePhone);
+    if (value == null) return res.status(400).json({ error: 'invalid or consumed code' });
+
+    // (Starter leaves points unchanged on redeem.)
+    res.json({ ok: true, value, phone: usePhone });
   } catch (e:any) {
-    res.status(500).json({ error: e?.message || 'redeem failed' });
+    res.status(400).json({ error: e?.message || 'redeem failed' });
   }
 });
+
 
 // ---------- Amount → Points + Coupon helpers ----------
 const COUPON_THRESHOLD = Number(process.env.COUPON_THRESHOLD || 100); // points threshold
@@ -178,7 +183,7 @@ app.post('/payments/process', async (req, res) => {
       const coupon = await maybeCreateCoupon(usePhone);
       {
         const bal = (await sas.getAttestations(usePhone)).balance;
-        const body = `You earned ${pts} point(s). Balance: ${bal}.`;
+        const body = `You earned ${pts} ${pointsConfig.pointsName} point(s). Balance: ${bal}.`;
         await sms.send(usePhone, body);
         smsOut.push({ to: usePhone, body });
       }
@@ -198,7 +203,7 @@ app.post('/payments/process', async (req, res) => {
       const coupon = await maybeCreateCoupon(usePhone);
       {
         const bal = (await sas.getAttestations(usePhone)).balance;
-        const body = `You earned ${pts} point(s). Balance: ${bal}.`;
+        const body = `You earned ${pts} ${pointsConfig.pointsName} point(s). Balance: ${bal}.`;
         await sms.send(usePhone, body);
         smsOut.push({ to: usePhone, body });
       }

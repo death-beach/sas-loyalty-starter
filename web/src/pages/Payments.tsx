@@ -69,8 +69,8 @@ export default function Payments() {
   const applyCode = async () => {
     if (!code) return alert('Enter a code');
     try {
-      const res = await apiRedeem(code); // server returns { ok, value, phone }
-      const value: number = Math.max(0, Math.min(res.value ?? 0, amount)); // cap so total never negative
+      const res = await apiRedeem(code);      
+      const value = Math.max(0, Math.min(res.value ?? 0, amount));
       setDiscount(value);
       setResult((prev: any) => ({ ...(prev || {}), redeem: res }));
       setCode('');
