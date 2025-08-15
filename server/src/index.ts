@@ -21,7 +21,7 @@ function normalizeUSPhone(input: string) {
   const m = input.match(/^\(\d{3}\)\s?\d{3}-\d{4}$/);
   if (!m) throw new Error('invalid phone format; use (555) 555-5555');
   const digits = (input.match(/\d/g) || []).join(''); // 10 digits guaranteed by regex
-  return `+1${digits}`; // internal E.164
+  return `${digits}`; // internal E.164
 }
 
 type PointsConfig = {
