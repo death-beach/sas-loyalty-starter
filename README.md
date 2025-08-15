@@ -97,6 +97,16 @@ Keep the interface; replace the internals.
 
 ---
 
+## Screenshots
+
+### Payments Page
+![Payments Page](web/public/screenshots/payments-page.png)
+
+### Setup Attestations Page
+![Setup Attestations Page](web/public/screenshots/setup-attestations-page.png)
+
+---
+
 ## Notes
 - No DB by design. In-memory demo state resets on server restart.
 - Privy wallet creation is **stubbed**; see `server/src/services/customers.ts`.
