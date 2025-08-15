@@ -14,7 +14,15 @@ const PORT = process.env.PORT ? Number(process.env.PORT) : 4000;
 const sms = createSmsProvider(process.env.SMS_PROVIDER || 'stub');
 const sas = createSasClient(process.env.USE_MOCK_SAS !== 'false');
 const redemptions = new RedemptionCodes();
-const DEMO_RETURNING_PHONE = process.env.DEMO_RETURNING_PHONE || '+15551234567';
+const DEMO_RETURNING_PHONE = process.env.DEMO_RETURNING_PHONE || '5551234567';
+
+function normalizeUSPhone(input: string) {
+  if (typeof input !== 'string') throw new Error('invalid phone format; use (555) 555-5555');
+  const m = input.match(/^\(\d{3}\)\s?\d{3}-\d{4}$/);
+  if (!m) throw new Error('invalid phone format; use (555) 555-5555');
+  const digits = (input.match(/\d/g) || []).join(''); // 10 digits guaranteed by regex
+  return `+1${digits}`; // internal E.164
+}
 
 type PointsConfig = {
   pointsName: string;
@@ -56,15 +64,20 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 app.post('/rewards/issue', async (req, res) => {
   try {
     const { phone, points, message } = req.body as { phone: string; points: number; message?: string };
-    if (!phone || points === undefined) return res.status(400).json({ error: 'phone and points required' });
+    if (points === undefined) return res.status(400).json({ error: 'points required' });
 
-    const attestation = await sas.issuePointsAttestation(phone, points, { reason: 'purchase' });
+    const smsOut: { to: string; body: string }[] = [];
+    const toPhone = normalizeUSPhone(phone || DEMO_RETURNING_PHONE);
+
+    const attestation = await sas.issuePointsAttestation(toPhone, points, { reason: 'purchase' });
     const text = message ?? `You earned ${points} point(s). Balance: ${attestation.balance}.`;
-    await sms.send(phone, text);
-    res.json({ ok: true, attestation });
+    await sms.send(toPhone, text);
+    smsOut.push({ to: toPhone, body: text });
+
+    res.json({ ok: true, attestation, phone: toPhone, sms: smsOut });
   } catch (e:any) {
     console.error(e);
-    res.status(500).json({ error: e?.message || 'issue failed' });
+    res.status(400).json({ error: e?.message || 'issue failed' });
   }
 });
 
@@ -133,43 +146,75 @@ app.post('/payments/process', async (req, res) => {
     const { amount, flow, phone } = req.body as {
       amount: number; flow: 'new'|'returning'|'returningWithDistribute'; phone?: string
     };
-    if (typeof amount !== 'number' || amount < 0) return res.status(400).json({ error: 'valid amount required' });
-    const pts = dollarsToPoints(amount);
+    const smsOut: { to: string; body: string }[] = [];
+
+    const amt = Number(amount);
+    if (!Number.isFinite(amt) || amt < 0) return res.status(400).json({ error: 'valid amount required' });
+    const pts = Math.floor(amt); // 1 pt per $1
 
     if (flow === 'new') {
       if (!phone) return res.status(400).json({ error: 'phone required for new customer' });
-      await customers.ensureWalletForPhone(phone);
-      const link = `${WEB_BASE}/login?phone=${encodeURIComponent(phone)}`;
-      await sms.send(phone, `Welcome to the program! View your points: ${link}`);
-      const att = await sas.issuePointsAttestation(phone, pts, { reason: 'purchase-new' });
-      const coupon = await maybeCreateCoupon(phone);
-      return res.json({ ok: true, pointsAdded: pts, coupon, att });
+      const toPhone = normalizeUSPhone(phone);
+      await customers.ensureWalletForPhone(toPhone);
+      const link = `${WEB_BASE}/login?phone=${encodeURIComponent(toPhone)}`;
+      {
+        const body = `Welcome to the program! View your points: ${link}`;
+        await sms.send(toPhone, body);
+        smsOut.push({ to: toPhone, body });
+      }
+      const att = await sas.issuePointsAttestation(toPhone, pts, { reason: 'purchase-new' });
+      const coupon = await maybeCreateCoupon(toPhone);
+      if (coupon) {
+        const body = `Your $${COUPON_VALUE} off code: ${coupon}. View points: ${link}`;
+        await sms.send(toPhone, body);
+        smsOut.push({ to: toPhone, body });
+      }
+      return res.json({ ok: true, pointsAdded: pts, coupon, att, phone: toPhone, sms: smsOut });
     }
 
     if (flow === 'returning') {
-      if (!phone) return res.status(400).json({ error: 'phone required for returning customer' });
-      const usePhone = phone || DEMO_RETURNING_PHONE;
+      const usePhone = normalizeUSPhone(phone || DEMO_RETURNING_PHONE);
       const att = await sas.issuePointsAttestation(usePhone, pts, { reason: 'purchase-returning' });
       const coupon = await maybeCreateCoupon(usePhone);
-      await sms.send(usePhone, `You earned ${pts} point(s). Balance: ${(await sas.getAttestations(usePhone)).balance}.`);
-      return res.json({ ok: true, pointsAdded: pts, coupon, att, phone: usePhone });
+      {
+        const bal = (await sas.getAttestations(usePhone)).balance;
+        const body = `You earned ${pts} point(s). Balance: ${bal}.`;
+        await sms.send(usePhone, body);
+        smsOut.push({ to: usePhone, body });
+      }
+      if (coupon) {
+        const link = `${WEB_BASE}/login?phone=${encodeURIComponent(usePhone)}`;
+        const body = `Your $${COUPON_VALUE} off code: ${coupon}. View points: ${link}`;
+        await sms.send(usePhone, body);
+        smsOut.push({ to: usePhone, body });
+      }
+      return res.json({ ok: true, pointsAdded: pts, coupon, att, phone: usePhone, sms: smsOut });
     }
-    
 
     if (flow === 'returningWithDistribute') {
-      if (!phone) return res.status(400).json({ error: 'phone required for returningWithDistribute' });
-      const usePhone = phone || DEMO_RETURNING_PHONE;
+      const usePhone = normalizeUSPhone(phone || DEMO_RETURNING_PHONE);
       await sas.issuePointsAttestation(usePhone, 95, { reason: 'seed-demo' });
       const att = await sas.issuePointsAttestation(usePhone, pts, { reason: 'purchase-returning' });
       const coupon = await maybeCreateCoupon(usePhone);
-      await sms.send(usePhone, `You earned ${pts} point(s). Balance: ${(await sas.getAttestations(usePhone)).balance}.`);
-      return res.json({ ok: true, pointsAdded: pts, seeded: 95, coupon, att, phone: usePhone });
+      {
+        const bal = (await sas.getAttestations(usePhone)).balance;
+        const body = `You earned ${pts} point(s). Balance: ${bal}.`;
+        await sms.send(usePhone, body);
+        smsOut.push({ to: usePhone, body });
+      }
+      if (coupon) {
+        const link = `${WEB_BASE}/login?phone=${encodeURIComponent(usePhone)}`;
+        const body = `Your $${COUPON_VALUE} off code: ${coupon}. View points: ${link}`;
+        await sms.send(usePhone, body);
+        smsOut.push({ to: usePhone, body });
+      }
+      return res.json({ ok: true, pointsAdded: pts, seeded: 95, coupon, att, phone: usePhone, sms: smsOut });
     }
 
     return res.status(400).json({ error: 'invalid flow' });
   } catch (e:any) {
     console.error(e);
-    res.status(500).json({ error: e?.message || 'payment processing failed' });
+    res.status(400).json({ error: e?.message || 'payment processing failed' });
   }
 });
 
