@@ -11,7 +11,6 @@ class StubSms implements SmsProvider {
 let TwilioLib: any | null = null;
 async function getTwilio() {
   if (!TwilioLib) {
-    // dynamic import but inside an async function (legal)
     TwilioLib = (await import('twilio')).default;
   }
   return TwilioLib;
@@ -21,7 +20,7 @@ class TwilioSms implements SmsProvider {
   private client: any;
   private from: string;
 
-  constructor(client: any, from: string) {
+  private constructor(client: any, from: string) {
     this.client = client;
     this.from = from;
   }
@@ -43,10 +42,7 @@ class TwilioSms implements SmsProvider {
 }
 
 export function createSmsProvider(provider: string): SmsProvider {
-  // For simplicity in this starter, keep construction sync:
-  // - if provider === 'twilio', we lazily connect on first send
   if (provider === 'twilio') {
-    // Return a small proxy that initializes Twilio on first call
     let real: TwilioSms | null = null;
     return {
       async send(to: string, body: string) {

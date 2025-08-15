@@ -21,7 +21,7 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 app.post('/rewards/issue', async (req, res) => {
   try {
     const { phone, points, message } = req.body as { phone: string; points: number; message?: string };
-    if (!phone || !points) return res.status(400).json({ error: 'phone and points required' });
+    if (!phone || points === undefined) return res.status(400).json({ error: 'phone and points required' });
 
     const attestation = await sas.issuePointsAttestation(phone, points, { reason: 'purchase' });
     const text = message ?? `You earned ${points} point(s). Balance: ${attestation.balance}.`;
@@ -61,11 +61,77 @@ app.post('/rewards/redeem', async (req, res) => {
     const { code, phone } = req.body as { code: string; phone: string };
     const ok = redemptions.verifyAndConsume(code, phone);
     if (!ok) return res.status(400).json({ error: 'invalid or consumed code' });
-    // For demo: deduct 1 point if available
     await sas.issuePointsAttestation(phone, -1, { reason: 'redeem-demo' });
     res.json({ ok: true });
   } catch (e:any) {
     res.status(500).json({ error: e?.message || 'redeem failed' });
+  }
+});
+
+// ---------- Amount → Points + Coupon helpers ----------
+const COUPON_THRESHOLD = Number(process.env.COUPON_THRESHOLD || 100); // points threshold
+const COUPON_VALUE = Number(process.env.COUPON_VALUE || 10); // $ off
+const WEB_BASE = process.env.WEB_BASE || 'http://localhost:5173';
+
+function dollarsToPoints(amount: number) {
+  return Math.floor(amount); // 1 pt per $1
+}
+
+async function maybeCreateCoupon(phone: string) {
+  const { balance } = await sas.getAttestations(phone);
+  if (balance >= COUPON_THRESHOLD) {
+    const code = redemptions.create(COUPON_VALUE, phone);
+    const link = `${WEB_BASE}/login?phone=${encodeURIComponent(phone)}`;
+    const body = `Your $${COUPON_VALUE} off code: ${code}. View points: ${link}`;
+    await sms.send(phone, body);
+    return code;
+  }
+  return null;
+}
+
+/**
+ * POST /payments/process
+ * Body: { amount: number, flow: 'new'|'returning'|'returningWithDistribute', phone?: string }
+ */
+app.post('/payments/process', async (req, res) => {
+  try {
+    const { amount, flow, phone } = req.body as {
+      amount: number; flow: 'new'|'returning'|'returningWithDistribute'; phone?: string
+    };
+    if (typeof amount !== 'number' || amount < 0) return res.status(400).json({ error: 'valid amount required' });
+    const pts = dollarsToPoints(amount);
+
+    if (flow === 'new') {
+      if (!phone) return res.status(400).json({ error: 'phone required for new customer' });
+      await customers.ensureWalletForPhone(phone);
+      const link = `${WEB_BASE}/login?phone=${encodeURIComponent(phone)}`;
+      await sms.send(phone, `Welcome to the program! View your points: ${link}`);
+      const att = await sas.issuePointsAttestation(phone, pts, { reason: 'purchase-new' });
+      const coupon = await maybeCreateCoupon(phone);
+      return res.json({ ok: true, pointsAdded: pts, coupon, att });
+    }
+
+    if (flow === 'returning') {
+      if (!phone) return res.status(400).json({ error: 'phone required for returning customer' });
+      const att = await sas.issuePointsAttestation(phone, pts, { reason: 'purchase-returning' });
+      const coupon = await maybeCreateCoupon(phone);
+      await sms.send(phone, `You earned ${pts} point(s). Balance: ${(await sas.getAttestations(phone)).balance}.`);
+      return res.json({ ok: true, pointsAdded: pts, coupon, att });
+    }
+
+    if (flow === 'returningWithDistribute') {
+      if (!phone) return res.status(400).json({ error: 'phone required for returningWithDistribute' });
+      await sas.issuePointsAttestation(phone, 95, { reason: 'seed-demo' });
+      const att = await sas.issuePointsAttestation(phone, pts, { reason: 'purchase-returning' });
+      const coupon = await maybeCreateCoupon(phone);
+      await sms.send(phone, `You earned ${pts} point(s). Balance: ${(await sas.getAttestations(phone)).balance}.`);
+      return res.json({ ok: true, pointsAdded: pts, seeded: 95, coupon, att });
+    }
+
+    return res.status(400).json({ error: 'invalid flow' });
+  } catch (e:any) {
+    console.error(e);
+    res.status(500).json({ error: e?.message || 'payment processing failed' });
   }
 });
 
