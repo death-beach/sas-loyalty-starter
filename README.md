@@ -97,6 +97,75 @@ Keep the interface; replace the internals.
 
 ---
 
+## How It Works
+
+### New Customer Flow
+1. Customer makes payment at POS
+2. POS prompts for phone number to join loyalty program
+3. Server creates wallet and issues points attestation via SAS
+4. Customer receives welcome SMS with points balance
+5. If points reach threshold, coupon code is generated and sent via SMS
+
+### Returning Customer Flow
+1. Customer makes payment at POS (identified by payment method/phone)
+2. Server issues points attestation via SAS based on purchase amount
+3. Customer receives SMS with updated points balance
+4. If points reach threshold, coupon code is generated and sent via SMS
+
+### Redemption Flow
+1. Customer enters coupon code at POS
+2. Server validates and consumes the code
+3. Discount is applied to current order (up to order total, no negative totals)
+
+```mermaid
+sequenceDiagram
+  participant Customer
+  participant POS as POS UI
+  participant Server
+  participant SAS as Solana Attestation Service
+  participant SMS as SMS Provider
+  
+  Note over Customer,SMS: New Customer Flow
+  Customer->>POS: Makes payment ($50)
+  POS->>Customer: "Join loyalty program? Enter phone"
+  Customer->>POS: Provides phone number
+  POS->>Server: POST /payments/process {amount: 50, flow: 'new', phone}
+  Server->>Server: Create wallet for customer
+  Server->>SAS: Issue 50 points attestation
+  SAS-->>Server: Attestation created on-chain
+  Server->>SMS: Send welcome SMS + points balance
+  SMS->>Customer: "Welcome! You have 50 points"
+  alt Points ≥ threshold (100)
+    Server->>Server: Generate coupon code
+    Server->>SMS: Send coupon SMS
+    SMS->>Customer: "Your $10 off code: ABC123"
+  end
+  Server-->>POS: {ok: true, pointsAdded: 50, coupon?, sms[]}
+  
+  Note over Customer,SMS: Returning Customer Flow  
+  Customer->>POS: Makes payment ($60)
+  POS->>Server: POST /payments/process {amount: 60, flow: 'returning'}
+  Server->>SAS: Issue 60 points attestation
+  SAS-->>Server: Attestation updated on-chain
+  Server->>SMS: Send points balance SMS
+  SMS->>Customer: "You earned 60 points. Balance: 110"
+  Server->>Server: Check if balance ≥ threshold
+  Server->>Server: Generate coupon code
+  Server->>SMS: Send coupon SMS
+  SMS->>Customer: "Your $10 off code: XYZ789"
+  Server-->>POS: {ok: true, pointsAdded: 60, coupon: 'XYZ789', sms[]}
+  
+  Note over Customer,SMS: Redemption Flow
+  Customer->>POS: "I have a coupon: XYZ789"
+  POS->>Server: POST /rewards/redeem {code: 'XYZ789', phone}
+  Server->>Server: Validate & consume code
+  Server-->>POS: {ok: true, value: 10, phone}
+  POS->>POS: Apply $10 discount to order
+  POS->>Customer: "Discount applied! New total: $40"
+```
+
+---
+
 ## Screenshots
 
 ### Payments Page
