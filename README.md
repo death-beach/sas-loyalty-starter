@@ -117,6 +117,9 @@ Keep the interface; replace the internals.
 2. Server validates and consumes the code
 3. Discount is applied to current order (up to order total, no negative totals)
 
+### Customer Onboarding & Points Earning
+This diagram shows how customers join the program and earn points through purchases.
+
 ```mermaid
 sequenceDiagram
   participant Customer
@@ -130,17 +133,11 @@ sequenceDiagram
   POS->>Customer: "Join loyalty program? Enter phone"
   Customer->>POS: Provides phone number
   POS->>Server: POST /payments/process {amount: 50, flow: 'new', phone}
-  Server->>Server: Create wallet for customer
   Server->>SAS: Issue 50 points attestation
   SAS-->>Server: Attestation created on-chain
-  Server->>SMS: Send welcome SMS + points balance
+  Server->>SMS: Send welcome SMS
   SMS->>Customer: "Welcome! You have 50 points"
-  alt Points ≥ threshold (100)
-    Server->>Server: Generate coupon code
-    Server->>SMS: Send coupon SMS
-    SMS->>Customer: "Your $10 off code: ABC123"
-  end
-  Server-->>POS: {ok: true, pointsAdded: 50, coupon?, sms[]}
+  Server-->>POS: {ok: true, pointsAdded: 50, sms[]}
   
   Note over Customer,SMS: Returning Customer Flow  
   Customer->>POS: Makes payment ($60)
@@ -152,23 +149,36 @@ sequenceDiagram
     POS->>Server: POST /payments/process {amount: 60, flow: 'returning', phone}
   end
   Server->>SAS: Issue 60 points attestation
-  SAS-->>Server: Attestation updated on-chain (Balance: 110)
-  Server->>SMS: Send points balance SMS
+  SAS-->>Server: Attestation updated on-chain
+  Server->>SMS: Send balance SMS
   SMS->>Customer: "You earned 60 points. Balance: 110"
-  Server->>Server: Check if balance ≥ threshold (100)
+  Server-->>POS: {ok: true, pointsAdded: 60, sms[]}
+```
+
+### Coupon Generation & Redemption
+This diagram shows how coupons are generated when thresholds are met and how they're redeemed.
+
+```mermaid
+sequenceDiagram
+  participant Customer
+  participant POS as POS UI
+  participant Server
+  participant SAS as Solana Attestation Service
+  participant SMS as SMS Provider
+  
+  Note over Customer,SMS: Coupon Generation (when balance ≥ 100 points)
+  Server->>Server: Check balance ≥ threshold (100)
   Server->>SAS: Burn 100 points from attestation
   SAS-->>Server: Attestation updated (Balance: 10)
   Server->>Server: Generate coupon code
   Server->>SMS: Send coupon SMS
   SMS->>Customer: "Your $10 off code: XYZ789"
-  Server-->>POS: {ok: true, pointsAdded: 60, coupon: 'XYZ789', sms[]}
   
-  Note over Customer,SMS: Redemption Flow
+  Note over Customer,SMS: Coupon Redemption Flow
   Customer->>POS: "I have a coupon: XYZ789"
   POS->>Server: POST /rewards/redeem {code: 'XYZ789', phone}
   Server->>Server: Validate & consume code
   Server-->>POS: {ok: true, value: 10, phone}
-  POS->>POS: Apply $10 discount to order
   POS->>Customer: "Discount applied! New total: $40"
 ```
 
