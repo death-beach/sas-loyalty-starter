@@ -115,8 +115,7 @@ Keep the interface; replace the internals.
 ### Redemption Flow
 1. Customer enters coupon code at POS
 2. Server validates and consumes the code
-3. Server burns redeemed points from SAS attestation (threshold amount)
-4. Discount is applied to current order (up to order total, no negative totals)
+3. Discount is applied to current order (up to order total, no negative totals)
 
 ```mermaid
 sequenceDiagram
@@ -157,6 +156,8 @@ sequenceDiagram
   Server->>SMS: Send points balance SMS
   SMS->>Customer: "You earned 60 points. Balance: 110"
   Server->>Server: Check if balance ≥ threshold (100)
+  Server->>SAS: Burn 100 points from attestation
+  SAS-->>Server: Attestation updated (Balance: 10)
   Server->>Server: Generate coupon code
   Server->>SMS: Send coupon SMS
   SMS->>Customer: "Your $10 off code: XYZ789"
@@ -165,8 +166,8 @@ sequenceDiagram
   Note over Customer,SMS: Redemption Flow
   Customer->>POS: "I have a coupon: XYZ789"
   POS->>Server: POST /rewards/redeem {code: 'XYZ789', phone}
-  Server->>Server: Validate & consume code  Server->>SAS: Burn 100 points from attestation
-  SAS-->>Server: Attestation updated (Balance: 10)  Server-->>POS: {ok: true, value: 10, phone}
+  Server->>Server: Validate & consume code
+  Server-->>POS: {ok: true, value: 10, phone}
   POS->>POS: Apply $10 discount to order
   POS->>Customer: "Discount applied! New total: $40"
 ```
