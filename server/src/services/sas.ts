@@ -10,8 +10,8 @@ import {
   getCreateSchemaInstruction, // for tokenized
   fetchSchema,
   fetchAttestation,
-  deriveCredentialPda,
-  deriveSchemaPda,
+  deriveCredentialPda, // for tokenized
+  deriveSchemaPda, // for tokenized
   deriveAttestationPda,
   serializeAttestationData,
   deserializeAttestationData,
