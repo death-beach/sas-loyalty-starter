@@ -1,4 +1,4 @@
-import { Buffer } from 'buffer'
+import { Buffer } from 'buffer' // for tokenized
 import bs58 from 'bs58'
 import nacl from 'tweetnacl'
 import { Keypair, clusterApiUrl } from '@solana/web3.js'
@@ -6,8 +6,8 @@ import {
   createSolanaClient, createTransaction, type SolanaClient, type TransactionSigner, type Transaction
 } from 'gill'
 import {
-  getCreateCredentialInstruction,
-  getCreateSchemaInstruction,
+  getCreateCredentialInstruction, // for tokenized
+  getCreateSchemaInstruction, // for tokenized
   fetchSchema,
   fetchAttestation,
   deriveCredentialPda,
