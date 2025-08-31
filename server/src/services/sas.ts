@@ -3,7 +3,7 @@ import bs58 from 'bs58'
 import nacl from 'tweetnacl'
 import { Keypair, clusterApiUrl } from '@solana/web3.js'
 import {
-  createSolanaClient, createTransaction, type SolanaClient, type TransactionSigner, type Transaction
+  createSolanaClient, createTransaction, type SolanaClient, type TransactionSigner, type Transaction, type Instruction
 } from 'gill'
 import {
   getCreateCredentialInstruction, // for tokenized
@@ -22,8 +22,12 @@ import { address, type Address } from '@solana/addresses'
 import { SignatureBytes } from '@solana/keys'
 
 export interface SasClient {
-  issuePointsAttestation(phone: string, delta: number, meta?: Record<string, any>): Promise<{ phone: string; delta: number; balance: number; ts: number; meta?: any }>
-  getAttestations(phone: string): Promise<{ balance: number; history: Array<{ delta: number; ts: number; meta?: any }> }>
+  issuePointsAttestation(
+    phone: string,
+    delta: number,
+    meta?: Record<string, unknown>
+  ): Promise<{ phone: string; delta: number; balance: number; ts: number; meta?: unknown }>
+  getAttestations(phone: string): Promise<{ balance: number; history: Array<{ delta: number; ts: number; meta?: unknown }> }>
 }
 
 const USE_MOCK = process.env.USE_MOCK_SAS !== 'false'
@@ -31,7 +35,7 @@ const USE_MOCK = process.env.USE_MOCK_SAS !== 'false'
 // ------------------------------ MOCK (existing) --------------------------------
 class MockSasClient implements SasClient {
   private store = new Map<string, { balance: number; history: Array<{ delta: number; ts: number; meta?: any }> }>()
-  async issuePointsAttestation(phone: string, delta: number, meta?: any) {
+  async issuePointsAttestation(phone: string, delta: number, meta?: unknown) {
     const v = this.store.get(phone) || { balance: 0, history: [] }
     v.balance += delta
     v.history.push({ delta, ts: Date.now(), meta })
@@ -91,6 +95,19 @@ async function ensureSetup(): Promise<{ client: SolanaClient; signer: Transactio
   return { client, signer, credential: CREDENTIAL_PDA as Address, schema: SCHEMA_PDA as Address }
 }
 
+async function diagnoseAttestation(
+  client: SolanaClient,
+  attestationPda: Address
+): Promise<'NO_ACCOUNT' | 'WRONG_OWNER' | 'SAS_OK'> {
+  const info = await client.rpc.getAccountInfo(attestationPda, { encoding: 'base64' }).send();
+  const exists = !!info.value;
+  const owner = info.value?.owner?.toString() ?? null;
+  const exp = SOLANA_ATTESTATION_SERVICE_PROGRAM_ADDRESS.toString();
+  if (!exists) return 'NO_ACCOUNT';
+  if (owner !== exp) return 'WRONG_OWNER';
+  return 'SAS_OK';
+}
+
 class RealSasClient implements SasClient {
   async issuePointsAttestation(phone: string, delta: number, meta?: any) {
     const { client, signer, credential, schema } = await ensureSetup()
@@ -116,30 +133,37 @@ class RealSasClient implements SasClient {
 
     const newTotal = Math.max(0, current + delta)
 
-    // Close existing (if any) then create new with updated points
-    const eventAuthority = await deriveEventAuthorityAddress()
-    const attProg = SOLANA_ATTESTATION_SERVICE_PROGRAM_ADDRESS
+    // Close (only if a SAS-owned account exists) then create with updated points
+    const eventAuthority = await deriveEventAuthorityAddress();
+    const attProg = SOLANA_ATTESTATION_SERVICE_PROGRAM_ADDRESS;
 
-    const instructions: any[] = []
-    if (current > 0) {
-      const { getCloseAttestationInstruction } = await import('sas-lib')
+    const instructions: Instruction[] = [];
+
+    const diag = await diagnoseAttestation(client, attestationPda);
+    if (diag === 'SAS_OK') {
+      const { getCloseAttestationInstruction } = await import('sas-lib');
       instructions.push(
         getCloseAttestationInstruction({
-          payer: signer, authority: signer,
+          payer: signer,
+          authority: signer,
           credential: address(credential),
           attestation: attestationPda,
           eventAuthority,
           attestationProgram: attProg,
         })
-      )
+      );
+    } else if (diag === 'WRONG_OWNER') {
+      throw new Error(`Attestation PDA ${attestationPda} exists but is not SAS-owned; refusing to modify.`);
     }
-    const sc = await fetchSchema(client.rpc, schema)
-    const data = serializeAttestationData(sc.data, { points: newTotal })
 
-    const { getCreateAttestationInstruction } = await import('sas-lib')
+    const sc = await fetchSchema(client.rpc, schema);
+    const data = serializeAttestationData(sc.data, { points: newTotal });
+
+    const { getCreateAttestationInstruction } = await import('sas-lib');
     instructions.push(
       getCreateAttestationInstruction({
-        payer: signer, authority: signer,
+        payer: signer,
+        authority: signer,
         credential: address(credential),
         schema: address(schema),
         attestation: attestationPda,
@@ -147,7 +171,8 @@ class RealSasClient implements SasClient {
         expiry: BigInt(0),
         data,
       })
-    )
+    );
+
 
     const latest = await client.rpc.getLatestBlockhash().send()
     const tx = createTransaction({
