@@ -34,7 +34,7 @@ const USE_MOCK = process.env.USE_MOCK_SAS !== 'false'
 
 // ------------------------------ MOCK (existing) --------------------------------
 class MockSasClient implements SasClient {
-  private store = new Map<string, { balance: number; history: Array<{ delta: number; ts: number; meta?: any }> }>()
+  private store = new Map<string, { balance: number; history: Array<{ delta: number; ts: number; meta?: unknown }> }>()
   async issuePointsAttestation(phone: string, delta: number, meta?: unknown) {
     const v = this.store.get(phone) || { balance: 0, history: [] }
     v.balance += delta
